@@ -6,8 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
 	"limble/models"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 func HandleWorkerCost(w http.ResponseWriter, r *http.Request, db *sql.DB) {
@@ -60,7 +61,7 @@ func HandleWorkerCost(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 
 func HandleLocationCost(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	completed := r.URL.Query().Get("completed")
-	locationID := r.URL.Query().Get("location_id") // instructions were a little inclear... did we want to be able to pass in multiple location IDs?
+	locationIDsParam := r.URL.Query().Get("location_id")
 
 	query := `
 		SELECT 
@@ -71,11 +72,21 @@ func HandleLocationCost(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 		JOIN tasks t ON l.id = t.location_id
 		JOIN logged_time lt ON t.id = lt.task_id
 		JOIN workers w ON lt.worker_id = w.id
-		WHERE t.completed = ?
-		AND l.id = ?
-		GROUP BY l.id;`
+		WHERE t.completed = ?`
 
-	rows, err := db.Query(query, completed, locationID)
+	locationIDs := strings.Split(locationIDsParam, ",")
+	args := []interface{}{completed}
+	if len(locationIDs) > 0 {
+		placeholders := strings.Repeat("?,", len(locationIDs))
+		placeholders = placeholders[:len(placeholders)-1] // remove trailing comma
+		query += " AND l.id IN (" + placeholders + ")"
+		for _, id := range locationIDs {
+			args = append(args, id)
+		}
+	}
+	query += " GROUP BY l.id;"
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -96,3 +107,38 @@ func HandleLocationCost(w http.ResponseWriter, r *http.Request, db *sql.DB) {
 	json.NewEncoder(w).Encode(results)
 }
 
+// will sum cost of all tasks for all locations and return one value
+// func HandleTotalLocationCost(w http.ResponseWriter, r *http.Request, db *sql.DB) {
+// 	completed := r.URL.Query().Get("completed")
+// 	locationIDsParam := r.URL.Query().Get("location_id") // instructions were unclear, allowing multiple location IDs
+
+// 	query := `
+// 		SELECT
+// 			SUM(lt.time_hours * w.hourly_wage) AS total_cost
+// 		FROM locations l
+// 		JOIN tasks t ON l.id = t.location_id
+// 		JOIN logged_time lt ON t.id = lt.task_id
+// 		JOIN workers w ON lt.worker_id = w.id
+// 		WHERE t.completed = ?`
+
+// 	locationIDs := strings.Split(locationIDsParam, ",")
+// 	args := []interface{}{completed}
+// 	if len(locationIDs) > 0 {
+// 		placeholders := strings.Repeat("?,", len(locationIDs))
+// 		placeholders = placeholders[:len(placeholders)-1] // remove trailing comma
+// 		query += " AND l.id IN (" + placeholders + ")"
+// 		for _, id := range locationIDs {
+// 			args = append(args, id)
+// 		}
+// 	}
+
+// 	row := db.QueryRow(query, args...)
+// 	var totalCost float64
+// 	if err := row.Scan(&totalCost); err != nil {
+// 		http.Error(w, err.Error(), http.StatusInternalServerError)
+// 		return
+// 	}
+
+// 	w.Header().Set("Content-Type", "application/json")
+// 	json.NewEncoder(w).Encode(map[string]float64{"total_cost": totalCost})
+// }
